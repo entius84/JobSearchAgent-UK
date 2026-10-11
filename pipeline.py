@@ -1,7 +1,18 @@
+"""
+Engineering & Technical Job Search Pipeline (pipeline.py)
+---------------------------------------------------------
+Automates the discovery, filtering, and local LLM evaluation of engineering,
+quality assurance, and technical operations roles within a 35-mile radius
+of High Wycombe using Playwright, Reed API, and local Ollama (qwen2.5:14b).
+
+Author: Vincenzo Vitiello
+"""
+
 from dotenv import load_dotenv
 load_dotenv()
 import json
 import os
+import random
 import time
 from docx import Document
 from playwright.sync_api import sync_playwright
@@ -38,15 +49,18 @@ SEARCH_TITLES = [
 ]
 
 
-def clean_text(text):
+def clean_text(text: str) -> str:
+    """Normalizes text by removing non-alphanumeric characters for signature matching."""
     return "".join(c.lower() for c in text if c.isalnum() or c.isspace()).strip()
 
 
-def get_job_signature(title, employer):
+def get_job_signature(title: str, employer: str) -> str:
+    """Generates a unique signature hash for job deduplication."""
     return f"{clean_text(title)}_{clean_text(employer)}"
 
 
-def load_processed_jobs():
+def load_processed_jobs() -> dict:
+    """Loads processed jobs, converting list formats to a signature lookup map."""
     if os.path.exists(PROCESSED_FILE):
         try:
             with open(PROCESSED_FILE, "r", encoding="utf-8") as f:
@@ -70,8 +84,8 @@ def load_processed_jobs():
     return {}
 
 
-def save_processed_job(signature, title, employer, url, score):
-    # This maintains compatibility with the legacy list or dict storage
+def save_processed_job(signature: str, title: str, employer: str, url: str, score: str) -> None:
+    """Appends job metadata to the centralized processed_jobs.json file."""
     json_path = PROCESSED_FILE
     records = []
     if os.path.exists(json_path):
@@ -104,7 +118,8 @@ def save_processed_job(signature, title, employer, url, score):
         json.dump(records, f, indent=4)
 
 
-def query_ollama(prompt, context=""):
+def query_ollama(prompt: str, context: str = "") -> str:
+    """Sends prompt and Career Vault context to local Ollama instance (qwen2.5:14b)."""
     system_instruction = (
         "CRITICAL: You are evaluating jobs for Vincenzo Vitiello, a mechanical "
         "engineer holding a BEng (Hons) from The Open University and AMIMechE "
@@ -124,7 +139,8 @@ def query_ollama(prompt, context=""):
         raise Exception(f"Error: {response.status_code} - {response.text}")
 
 
-def read_docx(file_path):
+def read_docx(file_path: str) -> str:
+    """Extracts text content from Word document files (.docx)."""
     try:
         doc = Document(file_path)
         return "\n".join([p.text for p in doc.paragraphs])
@@ -132,7 +148,8 @@ def read_docx(file_path):
         return f"[Error reading docx: {e}]"
 
 
-def read_pdf(file_path):
+def read_pdf(file_path: str) -> str:
+    """Extracts text content from PDF files."""
     try:
         reader = PdfReader(file_path)
         text = ""
@@ -145,7 +162,8 @@ def read_pdf(file_path):
         return f"[Error reading pdf: {e}]"
 
 
-def load_vault_documents(vault_paths):
+def load_vault_documents(vault_paths) -> dict:
+    """Recursively scans career vault directories for reference files."""
     documents = {}
     if isinstance(vault_paths, str):
         vault_paths = [vault_paths]
@@ -174,7 +192,11 @@ def load_vault_documents(vault_paths):
     return documents
 
 
-def scrape_linkedin_search(page, keyword, location="High Wycombe", max_listings=2):
+def scrape_linkedin_search(page, keyword: str, location: str = "High Wycombe", max_listings: int = 2) -> list:
+    """
+    Scrapes LinkedIn job listings within a 35-mile radius using a bounded scroll loop 
+    with randomized anti-bot delays and automatic end-of-list detection.
+    """
     processed_data = load_processed_jobs()
     detailed_jobs = []
     seen_urls = set()
@@ -200,13 +222,25 @@ def scrape_linkedin_search(page, keyword, location="High Wycombe", max_listings=
     except Exception:
         pass
 
-    # Scroll to trigger lazy loading of job links into the DOM
-    for _ in range(4):
+    # Bounded scroll loop to trigger lazy loading (up to 8 iterations with safety check)
+    previous_count = 0
+    max_scrolls = 8
+    for i in range(max_scrolls):
         try:
-            page.mouse.wheel(0, 2000)
+            page.locator(".jobs-search-results-list, .scaffold-layout__list").evaluate("node => node.scrollTop = node.scrollHeight")
         except Exception:
-            pass
-        time.sleep(2)
+            try:
+                page.mouse.wheel(0, 2000)
+            except Exception:
+                pass
+        
+        time.sleep(random.uniform(2.0, 3.5))
+        
+        current_jobs = page.locator("a[href*='/jobs/view/']").count()
+        if current_jobs == previous_count:
+            print(f"Reached end of LinkedIn results list at scroll iteration {i + 1}.")
+            break
+        previous_count = current_jobs
 
     # Target job anchor tags directly (immune to hashed/changing CSS class names)
     job_links = page.locator("a[href*='/jobs/view/']").all()
@@ -283,7 +317,8 @@ def scrape_linkedin_search(page, keyword, location="High Wycombe", max_listings=
     return detailed_jobs
 
 
-def fetch_reed_jobs_via_api(keyword, location="High Wycombe", max_listings=2):
+def fetch_reed_jobs_via_api(keyword: str, location: str = "High Wycombe", max_listings: int = 2) -> list:
+    """Queries Reed API for local engineering roles within a 35-mile radius."""
     processed_data = load_processed_jobs()
     detailed_jobs = []
     seen_urls = set()
