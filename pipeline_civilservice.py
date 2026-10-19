@@ -1,8 +1,8 @@
 """
 Civil Service Jobs Scraper (pipeline_civilservice.py)
 -----------------------------------------------------
-Scrapes Civil Service Jobs within a 20-mile radius of High Wycombe
-and saves the output to civiservice.json.
+Scrapes all Civil Service Jobs within a 20-mile radius of High Wycombe
+across all pages, avoids duplicates using civiservice.json, and accumulates results.
 """
 
 import json
@@ -14,9 +14,27 @@ OUTPUT_FILE = "civiservice.json"
 TARGET_LOCATION = "High Wycombe"
 
 
+def load_existing_jobs():
+    """Loads already saved jobs from civiservice.json to avoid duplicates."""
+    if os.path.exists(OUTPUT_FILE):
+        try:
+            with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            return []
+    return []
+
+
 def scrape_civil_service():
     profile_dir = r"C:\JobSearchAgent\playwright_profile"
     os.makedirs(profile_dir, exist_ok=True)
+
+    # Load existing jobs to build our duplicate prevention set
+    existing_jobs = load_existing_jobs()
+    seen_urls = {job["url"] for job in existing_jobs if "url" in job}
+    print(f"Loaded {len(existing_jobs)} existing jobs from {OUTPUT_FILE} (will skip duplicates).")
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -31,14 +49,14 @@ def scrape_civil_service():
         )
 
         search_url = "https://www.civilservicejobs.service.gov.uk/csr/index.cgi"
-        print("Navigazione al portale Civil Service Jobs...")
+        print("Navigating to Civil Service Jobs portal...")
         page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
         
-        # Pausa per permetterti di risolvere manualmente il captcha/robot check
-        input("\nRisolvi l'eventuale controllo anti-bot nel browser, quindi premi **Invio** qui nel terminale per continuare...\n")
+        # Pause for manual captcha/robot verification
+        input("\n👉 Complete any robot/captcha check in the browser window, then press **Enter** here in the terminal to continue...\n")
         time.sleep(2)
 
-        # 1. Imposta la località nel campo Where e invia la ricerca
+        # 1. Set location search
         try:
             where_input = page.locator("input[name='where'], input#where").first
             if where_input.count() > 0:
@@ -49,117 +67,142 @@ def scrape_civil_service():
                 search_btn.click()
                 time.sleep(5)
         except Exception as e:
-            print(f"Nota sulla configurazione della ricerca iniziale: {e}")
+            print(f"Note on initial search setup: {e}")
 
-        # 2. Imposta il raggio a 20 miglia tramite JavaScript
+        # 2. Set 20-mile radius filter & Sort by Newest via JavaScript
         try:
-            print("Applicazione del filtro raggio a 20 miglia...")
+            print("Applying 20-mile radius and sorting by Newest...")
             page.evaluate("""() => {
                 document.querySelectorAll('details').forEach(el => el.open = true);
-                let select = document.querySelector('#ID_csr_form_postcodedistance');
-                if (select) {
-                    select.value = '20';
-                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                
+                let selectDist = document.querySelector('#ID_csr_form_postcodedistance');
+                if (selectDist) {
+                    selectDist.value = '20';
+                    selectDist.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                let sortSelect = document.querySelector('select#ID_csr_form_sortby, select[name*="sort"]');
+                if (sortSelect) {
+                    for (let option of sortSelect.options) {
+                        let txt = option.text.toLowerCase();
+                        if (txt.includes('new') || txt.includes('date') || txt.includes('closing')) {
+                            sortSelect.value = option.value;
+                            sortSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                            break;
+                        }
+                    }
                 }
             }""")
-            
-            print("Attesa aggiornamento risultati...")
-            time.sleep(5)
-            print("Filtro applicato.")
+            time.sleep(6)
+            print("Filters and sorting applied successfully.")
         except Exception as e:
-            print(f"Nota sull'applicazione del filtro a 20 miglia: {e}")
+            print(f"Note on applying filters/sorting: {e}")
 
-        # Estrae i link degli annunci puntando alle intestazioni o ai link principali dei risultati
-        # Cerchiamo tutti i link all'interno dei risultati di ricerca (es. h2 a, h3 a o classi simili)
-        job_links = page.locator("h2 a, h3 a, .search-result a, main a[href*='spec'], main a[href*='job']").all()
-        
-        # Se i selettori specifici non bastano, prendiamo i link validi che sembrano titoli di lavoro
-        if len(job_links) == 0:
-            job_links = page.locator("main a").all()
+        # 3. Robust Multi-Page Pagination Loop
+        all_new_jobs_meta = []
+        page_num = 1
 
-        print(f"Trovati {len(job_links)} elementi candidati.")
+        while page_num <= 10:  # Safety cap at 10 pages (~250 jobs max)
+            print(f"Scraping search results page {page_num}...")
+            time.sleep(3)
 
-        jobs_data = []
-        seen_urls = set()
+            # Re-query links fresh on the current page DOM
+            links = page.locator("h2 a, h3 a, .search-result a").all()
+            page_jobs_count = 0
 
-        for link in job_links:
-            try:
-                if link.count() == 0:
-                    continue
-                
-                title = link.inner_text().strip()
-                # Filtriamo solo i link che sembrano titoli di lavoro reali (evitando paginazioni o link generici)
-                if not title or len(title) < 8 or title.lower() in ["next »", "previous", "home", "sign in", "cymraeg", "advanced search"]:
-                    continue
-
-                href = link.get_attribute("href")
-                if not href:
-                    continue
-                
-                full_url = (
-                    href
-                    if href.startswith("http")
-                    else f"https://www.civilservicejobs.service.gov.uk{href}"
-                )
-                
-                if full_url in seen_urls:
-                    continue
-                seen_urls.add(full_url)
-
-                department = "Government Department"
+            for link in links:
                 try:
-                    department = link.evaluate(
-                        """el => {
-                        let container = el.closest('li') || el.closest('div') || el.parentElement;
-                        for(let i=0; i<4; i++) {
-                            if(!container) break;
-                            let dept = container.querySelector('.department, .employer-name, .org-name, span');
-                            if(dept && dept.innerText.trim().length > 1 && dept.innerText.trim() !== arguments[0]) {
-                                return dept.innerText.trim();
+                    if link.count() == 0:
+                        continue
+                    title = link.inner_text().strip()
+                    if not title or len(title) < 8 or title.lower() in ["next »", "previous", "home", "sign in", "cymraeg", "advanced search"]:
+                        continue
+                    
+                    href = link.get_attribute("href")
+                    if not href:
+                        continue
+                    
+                    full_url = href if href.startswith("http") else f"https://www.civilservicejobs.service.gov.uk{href}"
+                    
+                    # Skip if already in our json file or already collected in this run
+                    if full_url in seen_urls:
+                        continue
+                    seen_urls.add(full_url)
+
+                    department = "Government Department"
+                    try:
+                        department = link.evaluate("""el => {
+                            let container = el.closest('li') || el.closest('div') || el.parentElement;
+                            for(let i=0; i<4; i++) {
+                                if(!container) break;
+                                let dept = container.querySelector('.department, .employer-name, .org-name, span');
+                                if(dept && dept.innerText.trim().length > 1 && dept.innerText.trim() !== arguments[0]) {
+                                    return dept.innerText.trim();
+                                }
+                                container = container.parentElement;
                             }
-                            container = container.parentElement;
-                        }
-                        return 'Government Department';
-                    }""",
-                        title,
-                    )
+                            return 'Government Department';
+                        }""", title)
+                    except Exception:
+                        pass
+
+                    all_new_jobs_meta.append({
+                        "title": title,
+                        "employer": department,
+                        "url": full_url
+                    })
+                    page_jobs_count += 1
                 except Exception:
                     pass
 
-                # Entra nei dettagli dell'annuncio per recuperare la descrizione
-                link.click()
-                time.sleep(2.5)
+            print(f"Collected {page_jobs_count} new unique jobs from page {page_num}.")
 
-                desc_elem = page.locator(
-                    "#job-description, .job-details-content, main, article"
-                ).first
-                description = (
-                    desc_elem.inner_text().strip()
-                    if desc_elem.count() > 0
-                    else "Description not extracted."
-                )
+            # Navigate to next page explicitly
+            next_page_num = page_num + 1
+            next_page_link = page.locator(f"a:has-text('{next_page_num}'), a:has-text('next »')").first
+            
+            if next_page_link.count() > 0 and next_page_link.is_visible():
+                try:
+                    next_page_link.click()
+                    page_num = next_page_num
+                    time.sleep(4)
+                except Exception as ex:
+                    print(f"Pagination navigation notice: {ex}")
+                    break
+            else:
+                print("Reached the last page of search results.")
+                break
 
-                job_info = {
-                    "title": title,
-                    "employer": department,
-                    "url": full_url,
-                    "description": description,
-                }
-                jobs_data.append(job_info)
-                print(f"[Estratto] {title} presso {department}")
+        print(f"\nTotal new unique jobs to fetch descriptions for: {len(all_new_jobs_meta)}")
 
-                # Torna indietro ai risultati di ricerca e ri-applica se necessario
-                page.go_back()
+        # 4. Visit each new job URL to fetch full descriptions
+        newly_scraped_jobs = []
+        for i, job in enumerate(all_new_jobs_meta):
+            print(f"[{i+1}/{len(all_new_jobs_meta)}] Fetching description: {job['title']} at {job['employer']}")
+            try:
+                page.goto(job['url'], wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)
 
-            except Exception as ex:
-                print(f"Errore durante l'analisi dell'annuncio: {ex}")
+                desc_elem = page.locator("#job-description, .job-details-content, main, article").first
+                description = desc_elem.inner_text().strip() if desc_elem.count() > 0 else "Description not extracted."
 
-        # Salva tutto su civiservice.json
+                job_info = {
+                    "title": job['title'],
+                    "employer": job['employer'],
+                    "url": job['url'],
+                    "description": description
+                }
+                newly_scraped_jobs.append(job_info)
+            except Exception as ex:
+                print(f"Error fetching details for {job['url']}: {ex}")
+
+        # 5. Combine existing jobs with newly scraped ones and save back to civiservice.json
+        combined_jobs = existing_jobs + newly_scraped_jobs
         output_path = os.path.join(os.getcwd(), OUTPUT_FILE)
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(jobs_data, f, indent=4)
-        print(f"\nSalvati con successo {len(jobs_data)} lavori in {output_path}")
+            json.dump(combined_jobs, f, indent=4)
+            
+        print(f"\nSuccessfully added {len(newly_scraped_jobs)} new jobs. Total jobs in {OUTPUT_FILE}: {len(combined_jobs)}")
 
         context.close()
 
