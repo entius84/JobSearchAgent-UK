@@ -31,14 +31,14 @@ def scrape_civil_service():
         )
 
         search_url = "https://www.civilservicejobs.service.gov.uk/csr/index.cgi"
-        print("Navigating to Civil Service Jobs portal...")
+        print("Navigazione al portale Civil Service Jobs...")
         page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
         
-        # Pause to let you handle any robot/captcha check manually
-        input("\n👉 Complete any robot/captcha check in the browser window, then press **Enter** here in the terminal to continue...\n")
+        # Pausa per permetterti di risolvere manualmente il captcha/robot check
+        input("\nRisolvi l'eventuale controllo anti-bot nel browser, quindi premi **Invio** qui nel terminale per continuare...\n")
         time.sleep(2)
 
-        # 1. Ensure "High Wycombe" is set in the Where box
+        # 1. Imposta la località nel campo Where e invia la ricerca
         try:
             where_input = page.locator("input[name='where'], input#where").first
             if where_input.count() > 0:
@@ -47,30 +47,29 @@ def scrape_civil_service():
             search_btn = page.locator("button:has-text('Search for jobs'), input[type='submit']").first
             if search_btn.count() > 0:
                 search_btn.click()
-                time.sleep(4)
+                time.sleep(5)
         except Exception as e:
-            print(f"Note on initial search setup: {e}")
+            print(f"Nota sulla configurazione della ricerca iniziale: {e}")
 
-        # 2. Open Advanced "Location filters" and set 20 miles radius
+        # 2. Apre i filtri e imposta il raggio a 20 miglia tramite JavaScript
         try:
-            print("Opening location filters...")
-            loc_filter = page.locator("text=Location filters, summary:has-text('Location filters'), a:has-text('Location filters')").first
-            if loc_filter.count() > 0 and loc_filter.is_visible():
-                loc_filter.click()
-                time.sleep(1.5)
-
-            # Select '20' from the distance dropdown
-            distance_select = page.locator("select[name*='distance'], select#search-distance, select").first
-            if distance_select.count() > 0:
-                distance_select.select_option("20")
-                print("Set search distance to 20 miles.")
-                time.sleep(3)
+            print("Impostazione del raggio a 20 miglia...")
+            page.evaluate("""() => {
+                document.querySelectorAll('details').forEach(el => el.open = true);
+                let select = document.querySelector('#ID_csr_form_postcodedistance');
+                if (select) {
+                    select.value = '20';
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }""")
+            time.sleep(5)
+            print("Filtro raggio applicato con successo.")
         except Exception as e:
-            print(f"Note on applying 20-mile filter: {e}")
+            print(f"Nota sull'applicazione del filtro a 20 miglia: {e}")
 
-        # Extract all job listing links containing 'jcode'
+        # Estrae i link degli annunci contenenti 'jcode'
         job_links = page.locator("a[href*='jcode']").all()
-        print(f"Found {len(job_links)} job listings matching criteria.")
+        print(f"Trovati {len(job_links)} annunci di lavoro che soddisfano i criteri.")
 
         jobs_data = []
         seen_urls = set()
@@ -95,7 +94,6 @@ def scrape_civil_service():
                 if not title or len(title) < 3:
                     continue
 
-                # Safely extract department context
                 department = "Government Department"
                 try:
                     department = link.evaluate(
@@ -116,7 +114,7 @@ def scrape_civil_service():
                 except Exception:
                     pass
 
-                # Click into job details to grab description
+                # Entra nei dettagli dell'annuncio per recuperare la descrizione
                 link.click()
                 time.sleep(3)
 
@@ -136,20 +134,19 @@ def scrape_civil_service():
                     "description": description,
                 }
                 jobs_data.append(job_info)
-                print(f"[Extracted] {title} at {department}")
+                print(f"[Estratto] {title} presso {department}")
 
-                # Go back to search results
                 page.go_back()
                 time.sleep(2)
 
             except Exception as ex:
-                print(f"Error parsing listing: {ex}")
+                print(f"Errore durante l'analisi dell'annuncio: {ex}")
 
-        # Save to civiservice.json
+        # Salva tutto su civiservice.json
         output_path = os.path.join(os.getcwd(), OUTPUT_FILE)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(jobs_data, f, indent=4)
-        print(f"\nSuccessfully saved {len(jobs_data)} jobs to {output_path}")
+        print(f"\nSalvati con successo {len(jobs_data)} lavori in {output_path}")
 
         context.close()
 
