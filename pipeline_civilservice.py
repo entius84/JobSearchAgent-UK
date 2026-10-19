@@ -51,9 +51,9 @@ def scrape_civil_service():
         except Exception as e:
             print(f"Nota sulla configurazione della ricerca iniziale: {e}")
 
-        # 2. Apre i filtri e imposta il raggio a 20 miglia tramite JavaScript
+        # 2. Imposta il raggio a 20 miglia tramite JavaScript
         try:
-            print("Impostazione del raggio a 20 miglia...")
+            print("Applicazione del filtro raggio a 20 miglia...")
             page.evaluate("""() => {
                 document.querySelectorAll('details').forEach(el => el.open = true);
                 let select = document.querySelector('#ID_csr_form_postcodedistance');
@@ -62,14 +62,22 @@ def scrape_civil_service():
                     select.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }""")
+            
+            print("Attesa aggiornamento risultati...")
             time.sleep(5)
-            print("Filtro raggio applicato con successo.")
+            print("Filtro applicato.")
         except Exception as e:
             print(f"Nota sull'applicazione del filtro a 20 miglia: {e}")
 
-        # Estrae i link degli annunci contenenti 'jcode'
-        job_links = page.locator("a[href*='jcode']").all()
-        print(f"Trovati {len(job_links)} annunci di lavoro che soddisfano i criteri.")
+        # Estrae i link degli annunci puntando alle intestazioni o ai link principali dei risultati
+        # Cerchiamo tutti i link all'interno dei risultati di ricerca (es. h2 a, h3 a o classi simili)
+        job_links = page.locator("h2 a, h3 a, .search-result a, main a[href*='spec'], main a[href*='job']").all()
+        
+        # Se i selettori specifici non bastano, prendiamo i link validi che sembrano titoli di lavoro
+        if len(job_links) == 0:
+            job_links = page.locator("main a").all()
+
+        print(f"Trovati {len(job_links)} elementi candidati.")
 
         jobs_data = []
         seen_urls = set()
@@ -78,28 +86,32 @@ def scrape_civil_service():
             try:
                 if link.count() == 0:
                     continue
+                
+                title = link.inner_text().strip()
+                # Filtriamo solo i link che sembrano titoli di lavoro reali (evitando paginazioni o link generici)
+                if not title or len(title) < 8 or title.lower() in ["next »", "previous", "home", "sign in", "cymraeg", "advanced search"]:
+                    continue
+
                 href = link.get_attribute("href")
                 if not href:
                     continue
+                
                 full_url = (
                     href
                     if href.startswith("http")
                     else f"https://www.civilservicejobs.service.gov.uk{href}"
                 )
+                
                 if full_url in seen_urls:
                     continue
                 seen_urls.add(full_url)
-
-                title = link.inner_text().strip()
-                if not title or len(title) < 3:
-                    continue
 
                 department = "Government Department"
                 try:
                     department = link.evaluate(
                         """el => {
                         let container = el.closest('li') || el.closest('div') || el.parentElement;
-                        for(let i=0; i<3; i++) {
+                        for(let i=0; i<4; i++) {
                             if(!container) break;
                             let dept = container.querySelector('.department, .employer-name, .org-name, span');
                             if(dept && dept.innerText.trim().length > 1 && dept.innerText.trim() !== arguments[0]) {
@@ -116,7 +128,7 @@ def scrape_civil_service():
 
                 # Entra nei dettagli dell'annuncio per recuperare la descrizione
                 link.click()
-                time.sleep(3)
+                time.sleep(2.5)
 
                 desc_elem = page.locator(
                     "#job-description, .job-details-content, main, article"
@@ -136,6 +148,7 @@ def scrape_civil_service():
                 jobs_data.append(job_info)
                 print(f"[Estratto] {title} presso {department}")
 
+                # Torna indietro ai risultati di ricerca e ri-applica se necessario
                 page.go_back()
                 time.sleep(2)
 
