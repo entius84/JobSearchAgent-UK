@@ -202,7 +202,7 @@ def load_vault_documents(vault_paths) -> dict:
     return documents
 
 # --- SCRAPERS ---
-def scrape_linkedin_search(page, keyword: str, location: str = "High Wycombe", max_listings: int = 2) -> list:
+def scrape_linkedin_search(page, keyword: str, location: str = "High Wycombe", max_listings: int = 25) -> list:
     """
     Scrapes LinkedIn job listings within a 35-mile radius using a bounded scroll loop 
     with randomized anti-bot delays and automatic end-of-list detection.
@@ -364,7 +364,7 @@ if __name__ == "__main__":
 
         for title in SEARCH_TITLES:
             print(f"\n--- Searching LinkedIn for: {title} in High Wycombe (35mi) ---")
-            all_raw_jobs.extend(scrape_linkedin_search(page, keyword=title, location="High Wycombe", max_listings=2))
+            all_raw_jobs.extend(scrape_linkedin_search(page, keyword=title, location="High Wycombe", max_listings=25))
 
             print(f"\n--- Fetching Reed API for: {title} in High Wycombe (35mi) ---")
             all_raw_jobs.extend(fetch_reed_jobs_via_api(keyword=title, location="High Wycombe", max_listings=2))
