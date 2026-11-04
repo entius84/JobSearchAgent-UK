@@ -1,0 +1,15 @@
+# Python & Environment
+__pycache__/
+*.pyc
+.env
+
+# Playwright Browser Profile (Keeps your LinkedIn cookies & session secure!)
+playwright_profile/
+
+# Personal Data & Career Vault (Keeps your CVs and certificates private!)
+CV certificates and CPD/
+tailored_applications/
+
+# Temporary files
+test_*.py
+sanitize_keys.py

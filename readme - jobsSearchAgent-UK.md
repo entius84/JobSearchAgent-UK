@@ -4,19 +4,18 @@ An automated, local-LLM-driven job search, evaluation, and application packaging
 
 ---
 
-##  Project Architecture & Dual Tracks
+## 🚀 Project Architecture & Workflow
 
-The system operates across two specialized pipelines that share a centralized data sink to prevent cross-pipeline duplication:
+The system is split into a modular two-phase pipeline to separate web discovery from local AI processing:
 
-1. **Engineering & Technical Leadership (`pipeline.py`)**
-   * **Focus:** Mechanical Engineering, Quality Assurance, Validation, Compliance, Decontamination, Medical Devices, and Technical Operations.
-   * **Search Radius:** 35-mile radius (covering Oxford, Slough, Reading, and West/Central London corridors).
-   * **Evaluation Angle:** Evaluates deep technical engineering credentials (BEng Hons, AMIMechE status, QMS compliance, and NHS operational track record).
+1. **Phase 1: Lightweight Discovery & Ingestion (`pipeline_scraper_No_Local_AI.py`)**
+   * **Focus:** Pure web scraping and API ingestion with **zero LLM overhead**. 
+   * **Hardware Requirement:** **CPU-friendly**—anyone can run this without a dedicated graphics card or local AI models.
+   * **Output:** Saves raw listings into `tailored_applications/scraped_jobs_raw.json`.
 
-2. **Administrative, Operations & Temp Support (`pipeline_admin.py`)**
-   * **Focus:** Service Coordination, Helpdesk Management, Maintenance Planning, EDMS Administration, and Project/PMO Administration.
-   * **Search Radius:** 10-mile hyper-local radius (strictly focused around High Wycombe).
-   * **Evaluation Angle:** Prioritizes speed-to-competency, document control rigor, KPI tracking, and local commute fit without penalizing roles for lacking heavy CAD/FEA.
+2. **Phase 2: Evaluation & Packaging (`pipeline.py` & `pipeline_admin.py`)**
+   * **Focus:** Local LLM intelligence using Ollama (`qwen2.5:14b`) to score compatibility against your Career Vault.
+   * **Hardware Requirement:** Requires local GPU compute and an active Ollama instance.
 
 ---
 
@@ -36,33 +35,41 @@ The system operates across two specialized pipelines that share a centralized da
 
 JobSearchAgent-UK/
 │
-├── pipeline.py                # Engineering & technical management pipeline (35 mi)
-├── pipeline_admin.py          # Local admin & temporary roles pipeline (10 mi)
+├── pipeline_scraper_No_Local_AI.py      # Phase 1: Zero-LLM multi-source discovery & ingestion scraper
+├── pipeline.py                # Phase 2: Engineering & technical management pipeline (35 mi)
+├── pipeline_admin.py          # Phase 2: Local admin & temporary roles pipeline (10 mi)
 ├── requirements.txt           # Python dependencies
+├── .env.example               # Template for environment variables
 ├── .env                       # Environment variables (API keys - git-ignored)
 ├── .gitignore                 # Security rules protecting session cookies and personal data
 │
 ├── CV certificates and CPD/   # Local Career Vault (CVs, certifications, training logs)
 │
 └── tailored_applications/     # Centralized output directory
+    ├── scraped_jobs_raw.json  # Raw ingested job database from Phase 1
     ├── processed_jobs.json    # Master deduplication registry
     ├── master_summary.md      # Real-time executive markdown dashboard
-    └── *_app_*.md             # Individual tailored cover letters and CV highlights
+    └── *_app_*.md             # Individual tailored cover letters and CV highlightsghts
 
-    🚀 Getting Started & Setup
-1. Clone the Repository
-Bash
+
+## 🚀 Getting Started & Setup
+
+### 1. Clone the Repository
+```bash
 git clone [https://github.com/entius84/JobSearchAgent-UK.git](https://github.com/entius84/JobSearchAgent-UK.git)
 cd JobSearchAgent-UK
+
 2. Install Dependencies
 Bash
 pip install -r requirements.txt
 python -m playwright install chromium
+
 3. Configure Environment Variables
 Create a .env file in the root directory to securely manage your API keys:
 
 Snippet di codice
 REED_API_KEY=your_reed_api_key_here
+
 4. Ensure Local LLM is Running
 Make sure Ollama is active and the required model is loaded locally:
 
